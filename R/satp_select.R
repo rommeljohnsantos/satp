@@ -102,20 +102,23 @@ priors <- expand.grid(lambda0, lambda1, lambda3, lambda4)
 
 p.max <- 7
 p.min <- 1
+p.range <- p.min:p.max
+p.range <- c(1,7,14)
 
-results <- matrix(0, nrow=((p.max - p.min + 1)*nrow(priors)), ncol=8)
+results <- matrix(0, nrow=(length(p.range)*nrow(priors)), ncol=10)
 colnames(results) <- c("lambda0", "lambda1", "lambda3", "lambda4", 
-											 "Lag","RMSE","MAE","Pearsons")
+											 "Lag", "MAE_mean", "in_range_mean", 
+											 "Bias", "Pearson_mean", "Pearson_cv")
 
 pb <- txtProgressBar(min = 0, max = nrow(results), style = 3)
 k <- 0
 
-for (p in p.min:p.max){ 
+for (p in p.range){ 
 	for(i in 1:nrow(priors)){ 
 		prior.tmp <- data.matrix(priors[i,])
 		
 		# Estimate the BVAR for the respective prior
-		tmp <- szbvar(pak_t_diff_ts_z1, 
+		tmp <- szbvar(pak_t_diff_z1, 
 									p, 
 									z=NULL, 
 									lambda0 = prior.tmp[1],
@@ -125,30 +128,48 @@ for (p in p.min:p.max){
 									lambda5 = 0,
 									mu5 = 0,
 									mu6 = 0, 
-									nu = ncol(y),
+									nu = ncol(pak_t_diff_z1),
 									qm = 4,
 									prior = 0,
 									posterior.fit = F)
 		
-		forecast <-uc.forecast(tmp, nsteps = nrow(pak_t_diff_z2),
-													 burnin=1000, gibbs=2000)[[1]]
+		invisible(capture.output(forecast <- uc.forecast(tmp, nsteps = nrow(pak_t_diff_z2),
+													 burnin=1000, gibbs=2000)[[1]]))
 		
 		forecast_mean <- t(sapply(1:dim(forecast)[2], function(i){
 			colMeans(forecast[,i,])}))
 		
+		forecast_67_lwr <- t(sapply(1:dim(forecast)[2], function(i){
+			apply(forecast[,i,], 2, quantile, probs = c(0.165))}))
 		
-		# Compute the posterior summaries
+		forecast_67_upr <- t(sapply(1:dim(forecast)[2], function(i){
+			apply(forecast[,i,], 2, quantile, probs = c(0.835))}))
 		
-		
-		
-		
-		
+				# Compute the posterior summaries
+		mae_mean <- mean(colMeans(abs(forecast_mean - pak_t_diff_z2)))
+		in_range <- mean(colMeans((pak_t_diff_z2 - forecast_67_lwr) >= 0 &
+			(forecast_67_upr - pak_t_diff_z2) >= 0))
+		bias_mean <- mean(colMeans(sign(forecast_mean - pak_t_diff_z2)))
+		cor_mean <- mean(diag(cor(forecast_mean, pak_t_diff_z2, method = "pearson")))
+		cor_cv <- sd(diag(cor(forecast_mean, pak_t_diff_z2, method = "pearson"))) /
+			mean(diag(cor(forecast_mean, pak_t_diff_z2, method = "pearson")))
+				
 		k <- k+1
 		setTxtProgressBar(pb, k)
-		results[k,] <- c(prior.tmp, 0, 0, 0, p, marg.llf, marg.post, bic,
-										 aic)
+		
+		results[k,] <- c(prior.tmp, 
+										 p, 
+										 mae_mean, 
+										 in_range, 
+										 bias_mean, 
+										 cor_mean, 
+										 cor_cv)
 	}
 }
+
+results[order(results[,"MAE_mean"], decreasing=F),]
+results[order(results[,"Bias"], decreasing=F),]
+results[order(results[,"Pearson_mean"], decreasing=T),]
 
 ################################################################################
 # Select lags and hyperparamers based on Information Criteria
@@ -180,7 +201,7 @@ colnames(results) <- c("lambda0", "lambda1", "lambda3", "lambda4",
 pb <- txtProgressBar(min = 0, max = nrow(results), style = 3)
 k <- 0
 
-for (p in p.min:p.max){ 
+for (p in p.range){ 
 	for(i in 1:nrow(priors)){ 
 		prior.tmp <- data.matrix(priors[i,1:4])
 		
@@ -195,14 +216,14 @@ for (p in p.min:p.max){
 									lambda5 = 0,
 									mu5 = 0,
 									mu6 = 0, 
-									nu = ncol(y),
+									nu = ncol(pak_t_diff_ts),
 									qm = 4,
 									prior = 0,
 									posterior.fit = T)
 		
 		# Compute the posterior summaries
 		marg.llf <- tmp$marg.llf        
-		bic <- 2*marg.llf + prod(dim(tmp$Bhat))*(nrow(y)-p)
+		bic <- 2*marg.llf + prod(dim(tmp$Bhat))*(nrow(pak_t_diff_ts)-p)
 		aic <- -2*marg.llf + 2*prod(dim(tmp$Bhat))
 		marg.post <- tmp$marg.post
 		k <- k+1
