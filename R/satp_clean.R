@@ -1,14 +1,17 @@
 #Load Packages
-library(foreach)
-library(plyr)
+library(XML)
 library(RCurl)
+library(plyr)
+library(foreign)
+
+
+library(foreach)
 library(stringr)
 library(tm)
-library(XML)
-library(XLConnect)
 library(zoo)
 library(gdata)
 library(lubridate)
+source("~/Dropbox/code/exceltoCSV.R")
 
 # Use the following if switching between Windows and Mac
 Sys.setlocale('LC_ALL', 'C')
@@ -61,15 +64,42 @@ cleanrecords <- function(x){
 
 #------------------------------------------------------------------------------#
 # Load locations data
+# Located at http://floods2010.pakresponse.info/MapCenter/GISData.aspx
 
-# loc.info <- read.xls(
-# 	"http://oneresponse.info/Countries/Pakistan/IM/publicdocuments/Pakistan_List%20of_Administrative%20levels%20(with%20PCODE).xls", 
-# 	as.is = T)[, c(1, 3, 5, 7)]
-tf <- paste(tempfile(), "xls", sep = ".")
-url = "http://oneresponse.info/Countries/Pakistan/IM/publicdocuments/Pakistan_List%20of_Administrative%20levels%20(with%20PCODE).xls"
-download.file(url, tf, mode="wb") 
-wb <- loadWorkbook(tf, create = F) 
-loc.info <- readWorksheet(wb, 1)[, c(1, 3, 5, 7)]
+pa <- getURL("http://cod.humanitarianresponse.info/country-region/pakistan")
+pa <- readHTMLTable(pa, stringsAsFactors = FALSE)
+
+pa <- lapply(pa, function(x) {
+  colnames(x) <- gsub("\\n|^\\s*|\\s*$", "", colnames(x))
+  x <- x[grepl("^(Province|Districts|Tehsil|Union Council|Mouza|Villages/Settlements)$", x[,"Title"]),]
+  if(nrow(x) == 0) {
+    x <- NULL
+  }
+  x
+})
+
+pa <- do.call("rbind", pa[!sapply(pa, is.null)])
+
+tst <- lapply(pa[,"How To Obtain"], function(x) {
+  
+  try({
+  file.remove(list.files(tempdir(), full.name = TRUE))
+
+  download.file(
+    x,
+    paste0(tempdir(), "/", gsub("[\\s[:punct:]]+", "", pa$Title[1]), ".zip"))
+
+  unzip(paste0(tempdir(), "/", gsub("[\\s[:punct:]]+", "", pa$Title[1]), ".zip"),
+    exdir = tempdir())
+  
+  out <- read.dbf(list.files(tempdir(), pattern = "\\.dbf"), as.is = TRUE)
+    out <- xmlToList(xmlParse(list.files(tempdir(), pattern = "\\.xml")))
+  })
+})
+
+pa <- htmlTreeParse(pa)
+
+
 
 loc.info$Province[grepl("AJK|FANA", loc.info$Province)] <- "contestedareas"
 loc.info <- loc.info[!grepl("Name Unknown", loc.info$Province), ]
