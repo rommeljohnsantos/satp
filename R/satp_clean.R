@@ -2,250 +2,124 @@
 library(XML)
 library(RCurl)
 library(plyr)
-library(foreign)
-
-
-library(foreach)
-library(stringr)
-library(tm)
 library(zoo)
-library(gdata)
-library(lubridate)
-source("~/Dropbox/code/exceltoCSV.R")
 
-# Use the following if switching between Windows and Mac
-Sys.setlocale('LC_ALL', 'C')
-
-#------------------------------------------------------------------------------#
-# Load Functions
-cleanrecords <- function(x){
-	year <- str_extract(deparse(substitute(x)), "\\d{4}")
-	
-	out1 <- unlist(strsplit(x, split='<p align=\"JUSTIFY\">', fixed = T))
-	out2 <- gsub('([<](/?[^\\>]+)[>])', '', out1)
-	out3 <- gsub('\\s{2,}', ' ', out2)
-	out4 <- gsub('[^[:alnum:].]+', " ", out3)
-	out5 <- gsub('(?<=Note Compiled from news reports and)[[:print:]]*', '', out4, 
-							 perl = T)
-	out6 <- gsub(paste('[[:print:]]*(?=', year, ' ', year, ')', sep=''), '', out5, 
-							 perl = T)
-	out7 <- gsub('Note Compiled from news reports and', '', out6)
-	out8 <- gsub(paste(year, ' ', year, sep=''), '', out7)
-	out9 <- gsub('(^\\s*?|\\s*?$)', '', out8)
-	out10 <- out9[!out9==""]
-	out11 <- out10[grepl("[[:alpha:]]", out10)]
-	out12 <- out11[!grepl("INDIA PAKISTAN NEPAL BHUTAN BANGLADESH SRI LANKA", 
-												out11)]
-	
-	dates <- str_extract(
-		out12, 
-		'^\\s*(January|February|March|April|May|June|July|August|September|October|November|December) \\d{1,2}')
-	
-	dates <- na.locf(dates)
-	
-	month <- match(str_extract(dates, "[[:alpha:]]+"), month.name)
-	day <- str_extract(dates, "\\d+")
-	
-	out13 <- gsub(
-		'\\s*(January|February|March|April|May|June|July|August|September|October|November|December) \\d+(\\s*[-]\\s*\\d+)?', 
-		'', out12)
-	out14 <- gsub("(^|[.])\\s*([[:upper:]][[:lower:]]+)\\b", "\\L \\2", out13, perl=T)
-	out15 <- gsub('\\s{2,}', ' ', out14)
-	out16 <- gsub("^\\s*\\d+\\s*(?!Taliban|TTP|SF)([[:upper:]])", "\\1", out15, perl = T)
-	out17 <- gsub('(^\\s+|\\s+$|[[:punct:]])', '', out16)
-	
-	
-	cbind("year"=year, 
-				"month"=month, 
-				"day"=day, 
-				"original"=out17, 
-				"record"=out17)
-}
+# library(foreach)
+# library(stringr)
+# library(tm)
+# library(gdata)
+# library(lubridate)
+# source("~/Dropbox/code/exceltoCSV.R")
+# 
+# # Use the following if switching between Windows and Mac
+# Sys.setlocale('LC_ALL', 'C')
 
 #------------------------------------------------------------------------------#
 # Load locations data
 # Located at http://floods2010.pakresponse.info/MapCenter/GISData.aspx
 
-pa <- getURL("http://cod.humanitarianresponse.info/country-region/pakistan")
-pa <- readHTMLTable(pa, stringsAsFactors = FALSE)
+geo <- read.csv(text = 
+  getURL("https://raw.github.com/schaunwheeler/satp/master/data/pakistan_pcodes_20110304.csv"),
+  as.is = TRUE)
+colnames(geo) <- c("p", "d", "t", "u")
+geo[] <- lapply(geo, function(x) gsub("\\s+No\\.?\\s*(\\d|i).*$", "", x)) 
+geo[] <- lapply(geo, function(x) gsub("(\\s+|_)?\\d.*$", "", x)) 
+geo[] <- lapply(geo, function(x) gsub("(-i|\\().*$", "", x)) 
+geo[] <- lapply(geo, function(x) gsub("-(uc)?$", "", x)) 
+geo[] <- lapply(geo, function(x) gsub("De-excluded Area (D.g )?", "", x)) 
+geo[] <- lapply(geo, function(x) gsub(" (P\\.a\\.|Tc|Uc)$", "", x)) 
+geo[] <- lapply(geo, function(x) gsub("\\w\\.\\s*", "", x)) 
+geo[] <- lapply(geo, function(x) gsub("\\s*/\\s*", "|", x)) 
+geo[] <- lapply(geo, function(x) gsub("-", "", x)) 
+geo[] <- lapply(geo, function(x) gsub("^(\\w)", "\\U\\1", x, perl = TRUE)) 
+geo[] <- lapply(geo, function(x) gsub("\\b([[:lower:]])", "\\U\\1", x, perl = TRUE))
+geo[] <- lapply(geo, function(x) gsub("\\s+\\w?$", "", x)) 
 
-pa <- lapply(pa, function(x) {
-  colnames(x) <- gsub("\\n|^\\s*|\\s*$", "", colnames(x))
-  x <- x[grepl("^(Province|Districts|Tehsil|Union Council|Mouza|Villages/Settlements)$", x[,"Title"]),]
-  if(nrow(x) == 0) {
-    x <- NULL
+geo <- unique(geo)
+
+#------------------------------------------------------------------------------#
+# Load and parse SATP records
+satp_url <- "http://www.satp.org/satporgtp/countries/pakistan/database/index.html"
+satp <- getHTMLLinks((getURL(satp_url)), baseURL = satp_url, relative = TRUE)
+satp <- grep("majorinc", satp, value = TRUE)
+
+satp <- lapply(satp, getURL)
+
+# grepl("400 Bad Request", x)
+
+satp <- lapply(satp, function(x) {
+
+  if(length(unlist(gregexpr("<td", x))) < 7) {
+    
+    x <- unlist(strsplit(
+      unlist(
+        regmatches(
+          x, 
+          gregexpr('<!-- #BeginEditable \"body\" -->.+<!-- #EndEditable -->', x)
+        )
+      ),
+      "<p.*?>"))
+    
+    x <- gsub("\\r\\n|<.*?>", "", x)
+    x <- gsub("^\\s+|\\s+$|(?<=\\s)\\s+", "", x, perl = TRUE)
+    x <- x[nchar(x) > 0]
+    
+    monthnames <- paste0(c("January", "February", "March", "April", "May", "June", 
+      "July", "August", "September", "October", "November", "December"), 
+      collapse = "|")
+    
+    monthday <- regmatches(x, gregexpr(paste0(
+      "^(", 
+      monthnames, 
+      ")\\s*\\d{1,2}-?(", 
+      monthnames, 
+      ")?\\s*\\d*"), x))
+    monthday[sapply(monthday, length) == 0] <- ""
+    monthday <- unlist(monthday)
+    monthday <- gsub(":.*$", "", monthday)
+    monthday[monthday == ""] <- NA
+    if(is.na(monthday[1])) {
+      monthday[1] <- "X"
+    }
+    monthday <- na.locf(monthday)
+    
+    years <- as.character(x[grep("^\\d{4}$", x)[
+      na.locf(match(1:length(x), grep("^\\d{4}$", x)))]])
+    
+    x <- gsub('^.{,15}:\\s+', '', x)
+    x <- gsub("[^[:digit:][:alnum:][:punct:][:space:]]", "", x)
+    x <- gsub('^\\s+|\\s+$|(?<=\\s)\\s+|\\"', '', x, perl = TRUE)
+    
+    x <- data.frame(
+      "year" = years,
+      "month" = gsub("[^[:alpha:]]", "", monthday),
+      "day" = gsub("[^[:digit:][:punct:]]", "", monthday),
+      "record" = as.character(x),
+      stringsAsFactors = FALSE)
+    x <- x[!grepl("^\\d{4}$", x$record),]
+  } else {
+
+    years <- unlist(regmatches(x, gregexpr('<TITLE.+?TITLE>', x)))
+    years <- gsub('\\D', "", years)
+    x <- unlist(regmatches(x, 
+      gregexpr('<!-- #BeginEditable \"body\" -->.+<!-- #EndEditable -->', x)))
+    x <- readHTMLTable(x, stringsAsFactors = FALSE)
+    ind <- which.max(sapply(x, function(y) length(unlist(y))))
+    x <- x[[ind]]
+    
+    x$Incidents <- gsub("[^[:digit:][:alnum:][:punct:][:space:]]", "", 
+      x$Incidents)
+    x$Incidents <- gsub('^\\s+|\\s+$|(?<=\\s)\\s+|\\"', '', 
+      x$Incidents, perl = TRUE)
+    
+    x <- data.frame(
+      "year" = rep(years, nrow(x)),
+      "month" = gsub("[^[:alpha:]]", "", x$Date),
+      "day" = gsub("[^[:digit:][:punct:]]", "", x$Date),
+      "record" = x$Incidents,
+      stringsAsFactors = FALSE)
   }
   x
 })
 
-pa <- do.call("rbind", pa[!sapply(pa, is.null)])
-
-tst <- lapply(pa[,"How To Obtain"], function(x) {
-  
-  try({
-  file.remove(list.files(tempdir(), full.name = TRUE))
-
-  download.file(
-    x,
-    paste0(tempdir(), "/", gsub("[\\s[:punct:]]+", "", pa$Title[1]), ".zip"))
-
-  unzip(paste0(tempdir(), "/", gsub("[\\s[:punct:]]+", "", pa$Title[1]), ".zip"),
-    exdir = tempdir())
-  
-  out <- read.dbf(list.files(tempdir(), pattern = "\\.dbf"), as.is = TRUE)
-    out <- xmlToList(xmlParse(list.files(tempdir(), pattern = "\\.xml")))
-  })
-})
-
-pa <- htmlTreeParse(pa)
-
-
-
-loc.info$Province[grepl("AJK|FANA", loc.info$Province)] <- "contestedareas"
-loc.info <- loc.info[!grepl("Name Unknown", loc.info$Province), ]
-loc.info$Province <- tolower(loc.info$Province)
-
-loc.info1 <- loc.info[, c("Province", "District", "Tehsil")]
-loc.info2 <- loc.info[loc.info$Union.Council != "", 
-											c("Province", "District", "Union.Council")]
-
-colnames(loc.info1) <- c("province", "district", "subdivision")
-colnames(loc.info2) <- c("province", "district", "subdivision")
-
-locations <- rbind(loc.info1, loc.info2)
-
-locations$subdivision <- gsub(" (Tehsil|Sub-division|Taluka)", "", 
-															locations$subdivision)
-locations$subdivision <- gsub("\\bi{1,3}$|\bNo(\\s[[:punct:]])[[:print:]]+$|Urban..", 
-															"", locations$subdivision)
-locations$subdivision <- gsub("(\\s|[[:punct:]])*\\d+(\\s|[[:punct:]])*", "", 
-															locations$subdivision)
-locations$subdivision <- gsub("\\b\\w{1,3}[[:punct:]]+(\\w){1,3}\\b|[[:punct:]]+w{,3}\\b", "", 
-															locations$subdivision)
-locations$subdivision <- gsub(" City\\s?|\\s?No$| Uc\\s?| Town|[.] ", "", 
-															locations$subdivision)
-locations$subdivision <- gsub("^\\s+|\\s+$|(?<=\\s)\\s+", 
-															"", locations$subdivision, perl = TRUE)
-locations$subdivision <- gsub("D.\\s?(G|g).\\s?(K|k)han", "Dera Ghazi Khan", 
-															locations$subdivision)
-locations$subdivision <- gsub("D.\\s?(I|i).\\s?(K|k)han", "Dera Ismail Khan", 
-															locations$subdivision)
-locations$district <- gsub("Tribal Area Adj.|T.a.adj.| PA$| Agency| Central| West| Distt", "", 
-													 locations$district)
-locations$district <- gsub("D.\\s?(G|g).\\s?(K|k)han", "Dera Ghazi Khan", 
-													 locations$district)
-locations$district <- gsub("D.\\s?(I|i).\\s?(K|k)han", "Dera Ismail Khan", 
-													 locations$district)
-locations$district <- gsub("Chagai", "Chag.?ai", locations$district)
-locations$subdivision <- gsub("..Tribe.?", "", locations$subdivision)
-locations$province[locations$province=="islamabad"] <- "punjab"
-locations$province[locations$province=="sind"] <- "sindh"
-locations$subdivision[grepl("Afridy Adam Khel Tribe", 
-														locations$subdivision)] <- "Darr?a\\s?Adam\\s?Khe.?l"
-locations$district[grepl("\\bdir", locations$district, 
-												 ignore.case = T)] <- "Dir"
-locations$subdivision[locations$province=="nwfp" & 
-												grepl("Matta", locations$subdivision)] <- "Matta"
-locations$subdivision[grepl("\\bdir", locations$subdivision, 
-														ignore.case = T)] <- "Dir"
-locations$subdivision[grepl("\\bkurram", locations$subdivision, 
-														ignore.case = T)] <- "Kurram"
-locations$subdivision[grepl("\\bMohammad", locations$subdivision, 
-														ignore.case = T)] <- "Mohammad"
-locations$subdivision[grepl("\\bZhob", locations$subdivision, 
-														ignore.case = T)] <- "Zhob"
-locations$district[grepl("^Tank$", locations$district) & 
-									 	grepl("fata", locations$province)] <- "Tank (tribal )?area"
-locations$district[grepl("^Tank$", 
-												 locations$district)] <- "Tank (district|city)"
-
-locations$subdivision <- gsub("Tank", "sxxxxxxxx1", locations$subdivision)
-locations$subdivision[grepl("Nawagai", locations$subdivision) &
-												locations$province == "nwfp"] <- "sxxxxxxxx2"
-locations <- rbind(locations, c("punjab", "islamabad", "sxxxxxxxx3"), 
-									 c("balochistan", "Musakhel", "sxxxxxxxx4"), 
-									 c("balochistan", "Barkhan", "sxxxxxxxx5"), 
-									 c("balochistan", "Panjgur", "dxxxxxxxx1"))
-locations[grepl("Orakzai", locations$district), 
-					"subdivision"] <- paste("sxxxxxxxx", 6:9, sep="")
-locations[locations$province=="nwfp" &
-						locations$district == "Charsadda" &
-						!is.na(locations$subdivision) &
-						locations$subdivision=="Matta", "subdivision"] <- "sxxxxxxx10"
-locations <- locations[!(grepl("Shamozai", locations$subdivision) &
-												 	!grepl("Swat", locations$district)), ]
-locations$district[grepl("^Peshawar$", locations$district) & 
-									 	grepl("fata", locations$province)] <- "dxxxxxxxx2"
-locations$district[grepl("^Dera Ismail Khan$", locations$district) & 
-									 	grepl("fata", locations$province)] <- "dxxxxxxxx3"
-locations$district[grepl("^Bannu$", locations$district) & 
-									 	grepl("fata", locations$province)] <- "dxxxxxxxx4"
-locations$district[grepl("^Kohat$", locations$district) & 
-									 	grepl("fata", locations$province)] <- "Darra Adam Khel"
-locations$district[grepl("^lakki Marwat$", locations$district) & 
-									 	grepl("fata", locations$province)] <- "dxxxxxxxx5"
-locations$district[grepl("^Nawagai$", locations$district) & 
-									 	grepl("fata", locations$province)] <- "dxxxxxxxx6"
-
-toremove <- tolower(locations$subdivision) %in% tolower(locations$district)
-locations <- locations[!toremove, ]
-locations <- locations[locations$subdivision!="",]
-locations <- as.data.frame(apply(locations, FUN=gsub, MARGIN = 2, pattern = "\\s+", replacement = ".?"), stringsAsFactors = F)
-locations <- unique(locations)
-
-#------------------------------------------------------------------------------#
-# Load and parse SATP records
-
-rec2012 <- toString.XMLNode(
-	htmlParse(
-		getURL(
-			"http://www.satp.org/satporgtp/countries/pakistan/database/majorincidents.htm")))
-rec2011 <- toString.XMLNode(
-	htmlParse(
-		getURL(
-			"http://www.satp.org/satporgtp/countries/pakistan/database/majorinci2011.htm")))
-rec2010 <- toString.XMLNode(
-	htmlParse(
-		getURL(
-			"http://www.satp.org/satporgtp/countries/pakistan/database/majorinci2010.htm")))
-rec2009 <- toString.XMLNode(
-	htmlParse(
-		getURL(
-			"http://www.satp.org/satporgtp/countries/pakistan/database/majorinci2009.htm")))
-rec2008 <- toString.XMLNode(
-	htmlParse(
-		getURL(
-			"http://www.satp.org/satporgtp/countries/pakistan/database/majorinci2008.htm")))
-rec2007 <- toString.XMLNode(
-	htmlParse(
-		getURL(
-			"http://www.satp.org/satporgtp/countries/pakistan/database/majorinci2007.htm")))
-rec2006.a <- toString.XMLNode(
-	htmlParse(
-		getURL(
-			"http://www.satp.org/satporgtp/countries/pakistan/database/majorinc2006.htm")))
-
-rec2006split <- strsplit(rec2006.a, "2005(?![-])", perl = T)
-
-rec2006 <- rec2006split[[1]][1]
-rec2005 <- rec2006split[[1]][2]
-
-clean2012 <- cleanrecords(rec2012)
-clean2011 <- cleanrecords(rec2011)
-clean2010 <- cleanrecords(rec2010)
-clean2009 <- cleanrecords(rec2009)
-clean2008 <- cleanrecords(rec2008)
-clean2007 <- cleanrecords(rec2007)
-clean2006 <- cleanrecords(rec2006)
-clean2005 <- cleanrecords(rec2005)
-
-pak <- rbind(clean2012, 
-						 clean2011, 
-						 clean2010, 
-						 clean2009, 
-						 clean2008, 
-						 clean2007, 
-						 clean2006, 
-						 clean2005)
-
-pak <- as.data.frame(pak, stringsAsFactors = F)
+satp <- do.call("rbind", satp)
