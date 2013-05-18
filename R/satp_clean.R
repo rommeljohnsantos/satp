@@ -1,16 +1,8 @@
 #Load Packages
 library(XML)
 library(RCurl)
-library(plyr)
 library(zoo)
 
-# library(foreach)
-# library(stringr)
-# library(tm)
-# library(gdata)
-# library(lubridate)
-# source("~/Dropbox/code/exceltoCSV.R")
-# 
 # # Use the following if switching between Windows and Mac
 # Sys.setlocale('LC_ALL', 'C')
 
@@ -45,7 +37,7 @@ satp <- grep("majorinc", satp, value = TRUE)
 
 satp <- lapply(satp, getURL)
 
-# grepl("400 Bad Request", x)
+# Maybe include grepl("400 Bad Request", x) to test for scraping failure
 
 satp <- lapply(satp, function(x) {
 
