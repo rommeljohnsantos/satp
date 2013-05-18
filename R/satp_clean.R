@@ -89,6 +89,7 @@ satp <- lapply(satp, function(x) {
       "record" = as.character(x),
       stringsAsFactors = FALSE)
     x <- x[!grepl("^\\d{4}$", x$record),]
+    
   } else {
 
     years <- unlist(regmatches(x, gregexpr('<TITLE.+?TITLE>', x)))
@@ -98,6 +99,7 @@ satp <- lapply(satp, function(x) {
     x <- readHTMLTable(x, stringsAsFactors = FALSE)
     ind <- which.max(sapply(x, function(y) length(unlist(y))))
     x <- x[[ind]]
+    x <- x[!grepl('Total', x$S.N.),]
     
     x$Incidents <- gsub("[^[:digit:][:alnum:][:punct:][:space:]]", "", 
       x$Incidents)
@@ -110,6 +112,8 @@ satp <- lapply(satp, function(x) {
       "day" = gsub("[^[:digit:][:punct:]]", "", x$Date),
       "record" = x$Incidents,
       stringsAsFactors = FALSE)
+    
+    x
   }
   x
 })
