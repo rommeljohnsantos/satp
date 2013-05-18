@@ -2,6 +2,7 @@
 library(XML)
 library(RCurl)
 library(zoo)
+library(stringr)
 
 # # Use the following if switching between Windows and Mac
 # Sys.setlocale('LC_ALL', 'C')
@@ -86,6 +87,7 @@ satp <- lapply(satp, function(x) {
       "year" = years,
       "month" = gsub("[^[:alpha:]]", "", monthday),
       "day" = gsub("[^[:digit:][:punct:]]", "", monthday),
+      "original" = as.character(x),
       "record" = as.character(x),
       stringsAsFactors = FALSE)
     x <- x[!grepl("^\\d{4}$", x$record),]
@@ -110,6 +112,7 @@ satp <- lapply(satp, function(x) {
       "year" = rep(years, nrow(x)),
       "month" = gsub("[^[:alpha:]]", "", x$Date),
       "day" = gsub("[^[:digit:][:punct:]]", "", x$Date),
+      "original" = x$Incidents,
       "record" = x$Incidents,
       stringsAsFactors = FALSE)
     
@@ -119,3 +122,70 @@ satp <- lapply(satp, function(x) {
 })
 
 satp <- do.call("rbind", satp)
+
+#------------------------------------------------------------------------------#
+# Standardize numbers
+#------------------------------------------------------------------------------#
+
+ones <- c("one", "two", "three", "four", "five", "six", "seven", "eight", 
+  "nine")
+teens <- c("ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen",
+  "sixteen", "seventeen", "eighteen", "nineteen")
+tens <- c("twenty", "thirty", "fou?rty", "fifty", "sixty", "seventy", "eighty", 
+  "ninety")
+hundreds <- c("(a|one) hundred", "two hundred", "three hundred", "four hundred", 
+  "five hundred", "six hundred", "seven hundred", "eight hundred", 
+  "nine hundred")
+twodigits <- do.call("c", lapply(tens, function(x) {
+  gsub('^\\s+|\\s+$|(?<=\\s)\\s+', '', paste(x, c("", ones)), perl = TRUE)
+}))
+
+first_part <- c(ones, teens, twodigits)
+
+second_part <- do.call("c", lapply(hundreds, function(x) {
+  gsub('^\\s+|\\s+$|(?<=\\s)\\s+', '', paste(x, c("", first_part)), perl = TRUE)
+}))
+
+num_table <- data.frame(
+  "words" = c(first_part, second_part),
+  "digits" = 1:999, 
+  stringsAsFactors = FALSE)
+
+num_table$words <- gsub("(hundred)\\s+", "\\1(and|\\\\s+|-)", num_table$words)
+num_table$words <- gsub("\\s+", "(\\\\s+|-)", num_table$words)
+num_table$words <- paste0("\\b", num_table$words)
+num_table <- num_table[order(num_table$digits, decreasing = TRUE),]
+
+for(i in 1:nrow(num_table)) {
+  satp$record <- gsub(num_table$words[i], num_table$digits[i], satp$record, 
+    ignore.case = TRUE)
+}
+
+# To use if eventually we want to pull specific casualty numbers
+# satp$record <- gsub("\\b(no.?|house of) one\\b", " ", satp$record, perl = TRUE)
+# satp$record <- gsub("\\bdozens?", " 12 ", satp$record, ignore.case = TRUE)
+# satp$record <- gsub("\\bscores of", " 20 ", satp$record, ignore.case = TRUE)
+# satp$record <- gsub("\\bas\\s+many\\s+as\\s+(\\d+)", " \\1 ", satp$record, ignore.case = TRUE)
+# satp$record <- gsub("\\b(at\\s+least|up\\s+to)\\s+(\\d+)", " \\2 ", satp$record, ignore.case = TRUE)
+# satp$record <- gsub("\\b(around|about|nearly)\\s+(\\d+)", " \\2 ", satp$record, ignore.case = TRUE)
+# satp$record <- gsub("\\b(many|several|few) others?", " 0 ", satp$record, ignore.case = TRUE)
+# satp$record <- gsub("\\ban?\\s+(unspecified)\\s+number(of\\s+)?", " 0 ", satp$record, ignore.case = TRUE)
+# satp$record <- gsub("\\b(a|an)\\s+(militant|police(m.n)?|inspector)", " 1 \\2 ", satp$record, ignore.case = TRUE)
+# satp$record <- gsub("20\\d{2}", satp$record, value = T, perl = TRUE)
+
+#------------------------------------------------------------------------------#
+# Extract location names
+#------------------------------------------------------------------------------#
+satp$record <- gsub('\\.\\s+([[:upper:]])', '. \\L\\1', satp$record, perl = TRUE)
+satp$record <- gsub('^([[:upper:]])', '\\L\\1', satp$record, perl = TRUE)
+
+proper_nouns <- str_extract_all(
+  satp$record, 
+  '[[:upper:]][[:lower:]]+(\\s+[[:upper:]][[:lower:]]+)*')
+proper_nouns[sapply(proper_nouns, length) ==0] <- ""
+
+proper_nouns <- do.call("rbind", lapply(1:length(proper_nouns), function(i) {
+  cbind("row" = i, "locs" = proper_nouns[[i]])}))
+
+tst <- lapply(unique(geo$p), function(x) agrep(x, proper_nouns[,"locs"]))
+
