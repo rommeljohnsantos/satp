@@ -3,6 +3,9 @@ library(XML)
 library(RCurl)
 library(zoo)
 library(stringr)
+library(pbapply)
+library(tm)
+library(missForest)
 
 # # Use the following if switching between Windows and Mac
 # Sys.setlocale('LC_ALL', 'C')
@@ -42,6 +45,7 @@ geo$p[grepl("Gilgit|Baltistan|Azad|Kashmir|Disputed", geo$p)] <- "Northern Areas
 geo$p[grepl("Federal|Capital", geo$p)] <- "Punjab"
 geo <- unique(geo)
 geo$index <- 1:nrow(geo)
+geo[geo == ""] <- NA
 
 #------------------------------------------------------------------------------#
 # Load and parse SATP records
@@ -200,10 +204,63 @@ proper_nouns[sapply(proper_nouns, length) ==0] <- ""
 proper_nouns <- do.call("rbind", lapply(1:length(proper_nouns), function(i) {
   cbind("row" = i, "locs" = proper_nouns[[i]])}))
 
-proper_nouns
-
-tst <- lapply(1:ncol(geo), function(i) {
+geo_matches <- lapply(1:ncol(geo[,setdiff(colnames(geo), "index")]), function(i) {
   ind <- grep("index", colnames(geo))
-  x <- geo[!duplicated(geo[,1:i]), c(i,ind)]
-  extr <- lapply(unique(geo$p), function(x) agrep(x, proper_nouns[,"locs"]))
+  x <- geo[!duplicated(geo[,1:i]) & !is.na(geo[,i]), ]
+  if(names(geo)[i] == "p") {
+    x_kp <- x[x$p == "Khyber Pakhtunkhwa",]
+    x_fa <- x[x$p == "Fata",]
+    
+    add_kp <- do.call("rbind", 
+      lapply(c("KP", "NWFP", "North West Frontier Province"), 
+        function(y){
+          out <- x_kp
+          out[,i] <- y
+          out}))
+      
+    add_fa <- do.call("rbind", 
+      lapply(c("FATA", "Federally Administered Tribal Areas"), 
+        function(y){
+          out <- x_fa
+          out[,i] <- y
+          out}))
+    
+    x <- rbind(x, add_kp, add_fa)
+  }
+  print(names(geo)[i])
+  extr <- pblapply(x[,i], function(y) agrep(y, proper_nouns[,"locs"]))
+  names(extr) <- x$index
+  extr <- tapply(extr, x$index, function(x) unique(do.call("c", x)))
+  extr <- lapply(1:i, function(j) {
+    out <- extr
+    names(out) <- geo[as.numeric(names(out)), j]
+    out
+    })
+  extr <- lapply(extr, function(z){
+    tapply(z, names(z), function(a) unique(do.call("c", a)))
+  })
+  names(extr) <- colnames(geo)[1:i]
+  extr
+})
+names(geo_matches) <- c("province", "district", "tehsil", "unioncouncil")
 
+geo_matches <- rapply(geo_matches, unlist)
+
+geo_df <- data.frame(
+  "origin" = gsub(
+    "([a-zA-z ]+)\\.([a-zA-z ])\\.([a-zA-z ]+)\\d*", 
+    "\\1", 
+    names(geo_matches), 
+    perl = TRUE),
+  "target" = gsub(
+    "([a-zA-z ]+)\\.([a-zA-z ])\\.([a-zA-z ]+)\\d*", 
+    "\\2", 
+    names(geo_matches), 
+    perl = TRUE),
+  "label" = gsub(
+    "([a-zA-z ]+)\\.([a-zA-z ])\\.([a-zA-z ]+)\\d*", 
+    "\\3", 
+    names(geo_matches), 
+    perl = TRUE),
+  "value" = as.numeric(geo_matches),
+  stringsAsFactors = FALSE)
