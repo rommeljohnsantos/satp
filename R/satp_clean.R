@@ -40,12 +40,17 @@ geo[] <- lapply(geo, function(x) gsub("-", "", x))
 geo[] <- lapply(geo, function(x) gsub("^(\\w)", "\\U\\1", x, perl = TRUE)) 
 geo[] <- lapply(geo, function(x) gsub("\\b([[:lower:]])", "\\U\\1", x, perl = TRUE))
 geo[] <- lapply(geo, function(x) gsub("\\s+\\w?$", "", x))
+geo[] <- lapply(geo, function(x) gsub("\\b(City|Hill|Cantt)\\b", "", x))
 
 geo$p[grepl("Gilgit|Baltistan|Azad|Kashmir|Disputed", geo$p)] <- "Northern Areas"
 geo$p[grepl("Federal|Capital", geo$p)] <- "Punjab"
+geo[] <- lapply(geo, function(x) {
+  gsub('^\\s+|\\s+$|(?<=\\s)\\s+', '', x, perl = TRUE)
+})
+geo[geo == "" | geo == "Unknown" | geo == "Tribal Area"] <- NA
 geo <- unique(geo)
 geo$index <- 1:nrow(geo)
-geo[geo == ""] <- NA
+
 
 #------------------------------------------------------------------------------#
 # Load and parse SATP records
@@ -230,7 +235,9 @@ geo_matches <- lapply(1:ncol(geo[,setdiff(colnames(geo), "index")]), function(i)
     x <- rbind(x, add_kp, add_fa)
   }
   print(names(geo)[i])
-  extr <- pblapply(x[,i], function(y) agrep(y, proper_nouns[,"locs"]))
+  extr <- pblapply(x[,i], function(y) {
+    agrep(paste0(y, "\\b"), proper_nouns[,"locs"], fixed = FALSE)
+    })
   names(extr) <- x$index
   extr <- tapply(extr, x$index, function(x) unique(unlist(x)))
   extr <- lapply(1:i, function(j) {
@@ -289,6 +296,6 @@ geo_list <- lapply(geo_df, function(x) {
   lapply(out, function(y) unique(na.omit(unlist(y))))
 })
 
-geo_list <- lapply(geo_list, function(x) {
-  tapply(x, proper_nouns$row, function(y) unique(na.omit(unlist(y))))
+geo_list2 <- lapply(geo_list, function(x) {
+  tapply(x, proper_nouns$row, function(y) table(na.omit(unlist(y))))
   })
