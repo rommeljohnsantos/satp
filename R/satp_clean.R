@@ -11,24 +11,37 @@ library(stringr)
 # Load locations data
 # Located at http://floods2010.pakresponse.info/MapCenter/GISData.aspx
 
-geo <- read.csv(text = 
-  getURL("https://raw.github.com/schaunwheeler/satp/master/data/pakistan_pcodes_20110304.csv"),
+geo1 <- read.csv(text = 
+  getURL("https://raw.github.com/schaunwheeler/satp/master/data/pakistan_pcodes_tehsil_20110304.csv"),
   as.is = TRUE)
+
+geo2 <- read.csv(text = 
+    getURL("https://raw.github.com/schaunwheeler/satp/master/data/pakistan_pcodes_unioncouncil_20110304.csv"),
+  as.is = TRUE)
+
+geo <- merge(geo1, geo2[, c("PROVINCE_C", "DISTRICT_C", "TEHSIL_C", "Union.Council")],
+  by = c("PROVINCE_C", "DISTRICT_C", "TEHSIL_C"),
+  all.x = TRUE, all.y = FALSE)
+geo <- geo[,!grepl("_C$", colnames(geo))]
 colnames(geo) <- c("p", "d", "t", "u")
+
 geo[] <- lapply(geo, function(x) gsub("\\s+No\\.?\\s*(\\d|i).*$", "", x)) 
 geo[] <- lapply(geo, function(x) gsub("(\\s+|_)?\\d.*$", "", x)) 
 geo[] <- lapply(geo, function(x) gsub("(-i|\\().*$", "", x)) 
 geo[] <- lapply(geo, function(x) gsub("-(uc)?$", "", x)) 
-geo[] <- lapply(geo, function(x) gsub("De-excluded Area (D.g )?", "", x)) 
+geo[] <- lapply(geo, function(x) gsub("De.(e|E)xcluded Area (D.g )?", "", x)) 
 geo[] <- lapply(geo, function(x) gsub(" (P\\.a\\.|Tc|Uc)$", "", x)) 
 geo[] <- lapply(geo, function(x) gsub("\\w\\.\\s*", "", x)) 
 geo[] <- lapply(geo, function(x) gsub("\\s*/\\s*", "|", x)) 
 geo[] <- lapply(geo, function(x) gsub("-", "", x)) 
 geo[] <- lapply(geo, function(x) gsub("^(\\w)", "\\U\\1", x, perl = TRUE)) 
 geo[] <- lapply(geo, function(x) gsub("\\b([[:lower:]])", "\\U\\1", x, perl = TRUE))
-geo[] <- lapply(geo, function(x) gsub("\\s+\\w?$", "", x)) 
+geo[] <- lapply(geo, function(x) gsub("\\s+\\w?$", "", x))
 
+geo$p[grepl("Gilgit|Baltistan|Azad|Kashmir|Disputed", geo$p)] <- "Northern Areas"
+geo$p[grepl("Federal|Capital", geo$p)] <- "Punjab"
 geo <- unique(geo)
+geo$index <- 1:nrow(geo)
 
 #------------------------------------------------------------------------------#
 # Load and parse SATP records
@@ -187,5 +200,10 @@ proper_nouns[sapply(proper_nouns, length) ==0] <- ""
 proper_nouns <- do.call("rbind", lapply(1:length(proper_nouns), function(i) {
   cbind("row" = i, "locs" = proper_nouns[[i]])}))
 
-tst <- lapply(unique(geo$p), function(x) agrep(x, proper_nouns[,"locs"]))
+proper_nouns
+
+tst <- lapply(1:ncol(geo), function(i) {
+  ind <- grep("index", colnames(geo))
+  x <- geo[!duplicated(geo[,1:i]), c(i,ind)]
+  extr <- lapply(unique(geo$p), function(x) agrep(x, proper_nouns[,"locs"]))
 
