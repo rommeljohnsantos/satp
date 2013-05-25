@@ -201,8 +201,10 @@ proper_nouns <- str_extract_all(
   '[[:upper:]][[:lower:]]+(\\s+[[:upper:]][[:lower:]]+)*')
 proper_nouns[sapply(proper_nouns, length) ==0] <- ""
 
-proper_nouns <- do.call("rbind", lapply(1:length(proper_nouns), function(i) {
-  cbind("row" = i, "locs" = proper_nouns[[i]])}))
+proper_nouns <- 
+  do.call("rbind", lapply(1:length(proper_nouns), function(i) {
+  data.frame("row" = i, "locs" = proper_nouns[[i]],
+    stringsAsFactors = FALSE)}))
 
 geo_matches <- lapply(1:ncol(geo[,setdiff(colnames(geo), "index")]), function(i) {
   ind <- grep("index", colnames(geo))
@@ -264,3 +266,16 @@ geo_df <- data.frame(
     perl = TRUE),
   "value" = as.numeric(geo_matches),
   stringsAsFactors = FALSE)
+
+geo_labels <- unique(geo_df$target)
+geo_df <- lapply(geo_labels, function(x) {
+  first <- geo_df[geo_df$target == x,]
+  out <- lapply(unique(first$origin), function(y) {
+    second <- first[first$origin == y,]
+    second$label[match(1:nrow(proper_nouns), second$value)]
+  })
+  out <- data.frame(out, stringsAsFactors = FALSE)
+  colnames(out) <- unique(first$origin)
+  out
+})
+names(geo_df) <- geo_labels
