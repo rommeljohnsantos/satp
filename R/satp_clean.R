@@ -232,17 +232,17 @@ geo_matches <- lapply(1:ncol(geo[,setdiff(colnames(geo), "index")]), function(i)
   print(names(geo)[i])
   extr <- pblapply(x[,i], function(y) agrep(y, proper_nouns[,"locs"]))
   names(extr) <- x$index
-  extr <- tapply(extr, x$index, function(x) unique(do.call("c", x)))
+  extr <- tapply(extr, x$index, function(x) unique(unlist(x)))
   extr <- lapply(1:i, function(j) {
     out <- extr
     names(out) <- geo[as.numeric(names(out)), j]
-    out
+    out[sapply(extr, length) > 0]
     })
   extr <- lapply(extr, function(z){
-    tapply(z, names(z), function(a) unique(do.call("c", a)))
+    tapply(z, names(z), function(a) sort(unique(unlist(a))))
   })
   names(extr) <- colnames(geo)[1:i]
-  extr
+  extr[sapply(extr, length) > 0]
 })
 names(geo_matches) <- c("province", "district", "tehsil", "unioncouncil")
 
@@ -272,10 +272,23 @@ geo_df <- lapply(geo_labels, function(x) {
   first <- geo_df[geo_df$target == x,]
   out <- lapply(unique(first$origin), function(y) {
     second <- first[first$origin == y,]
-    second$label[match(1:nrow(proper_nouns), second$value)]
+    second_list <- tapply(second$label, second$value, c)
+    third <- rep(NA, nrow(proper_nouns))
+    third[as.numeric(names(second_list))] <- second_list
+    third
   })
-  out <- data.frame(out, stringsAsFactors = FALSE)
-  colnames(out) <- unique(first$origin)
+  names(out) <- unique(first$origin)
   out
 })
 names(geo_df) <- geo_labels
+
+geo_list <- lapply(geo_df, function(x) {
+  inds <- rep(1:nrow(proper_nouns), length(x))
+  values <- do.call("c", x)
+  out <- tapply(values, inds, "c")
+  lapply(out, function(y) unique(na.omit(unlist(y))))
+})
+
+geo_list <- lapply(geo_list, function(x) {
+  tapply(x, proper_nouns$row, function(y) unique(na.omit(unlist(y))))
+  })
