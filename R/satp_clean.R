@@ -236,7 +236,7 @@ geo_matches <- lapply(1:ncol(geo[,setdiff(colnames(geo), "index")]), function(i)
   }
   print(names(geo)[i])
   extr <- pblapply(x[,i], function(y) {
-    agrep(paste0(y, "\\b"), proper_nouns[,"locs"], fixed = FALSE)
+    agrep(paste0("\\b", y, "\\b"), proper_nouns[,"locs"], fixed = FALSE)
     })
   names(extr) <- x$index
   extr <- tapply(extr, x$index, function(x) unique(unlist(x)))
@@ -255,7 +255,7 @@ names(geo_matches) <- c("province", "district", "tehsil", "unioncouncil")
 
 geo_matches <- rapply(geo_matches, unlist)
 
-geo_df <- data.frame(
+geo_matches <- data.frame(
   "origin" = gsub(
     "([a-zA-z ]+)\\.([a-zA-z ])\\.([a-zA-z ]+)\\d*", 
     "\\1", 
@@ -274,28 +274,26 @@ geo_df <- data.frame(
   "value" = as.numeric(geo_matches),
   stringsAsFactors = FALSE)
 
-geo_labels <- unique(geo_df$target)
-geo_df <- lapply(geo_labels, function(x) {
-  first <- geo_df[geo_df$target == x,]
-  out <- lapply(unique(first$origin), function(y) {
-    second <- first[first$origin == y,]
-    second_list <- tapply(second$label, second$value, c)
-    third <- rep(NA, nrow(proper_nouns))
-    third[as.numeric(names(second_list))] <- second_list
-    third
+geo_matches <- pblapply(c("p", "d", "t", "u"), function(x) {
+  cut_df <- geo_matches[geo_matches$target == x,]
+  out <- tapply(cut_df$label, cut_df$value, function(y) {
+    tab <- stack(table(y))
+    tab$ind <- as.character(tab$ind)
+    if(nrow(tab) > 1) {
+      if(min(tab$values) < max(tab$values) & 
+          sum(tab$values == max(tab$values)) == 1) {
+        tab <- tab[tab$values == max(tab$values),]
+      } else {
+        tab$ind <- NA
+      }
+    }
+    unique(tab$ind)
   })
-  names(out) <- unique(first$origin)
-  out
-})
-names(geo_df) <- geo_labels
-
-geo_list <- lapply(geo_df, function(x) {
-  inds <- rep(1:nrow(proper_nouns), length(x))
-  values <- do.call("c", x)
-  out <- tapply(values, inds, "c")
-  lapply(out, function(y) unique(na.omit(unlist(y))))
+    out[match(1:nrow(proper_nouns), as.numeric(names(out)))]
 })
 
-geo_list2 <- lapply(geo_list, function(x) {
-  tapply(x, proper_nouns$row, function(y) table(na.omit(unlist(y))))
-  })
+geo_matches <- lapply(geo_matches, function(x) {
+  out <- tapply(x, proper_nouns$row, function(y)unique(na.omit(y)))
+  out[sapply(out, length) != 1] <- NA
+  unlist(out)
+})
