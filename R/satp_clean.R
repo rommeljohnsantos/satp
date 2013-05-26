@@ -310,3 +310,34 @@ geo_matches <- Reduce(function(...) merge(..., by = c("record"),
 geo_matches$p[is.na(geo_matches$p) & !is.na(geo_matches$d)] <-
   geo$p[match(geo_matches$d[is.na(geo_matches$p) & !is.na(geo_matches$d)],
     geo$d)]
+
+for(x in na.omit(unique(geo_matches$p))) {
+  geo_matches$d[
+    geo_matches$p == x &
+      !(geo_matches$d %in% na.omit(geo$d[geo$p == x])) & 
+      !is.na(geo_matches$d)] <- NA
+}
+
+cap_words <- unique(proper_nouns$phrase)
+cap_frame <- data.frame(pblapply(cap_words, function(x) {
+  out <- gregexpr(paste0("\\b", x, "\\b"), satp$record, ignore.case = TRUE)
+  out_na <- sapply(out, "[[", 1) == -1
+  out <- sapply(out, length)
+  out[out_na] <- 0
+  out
+}), stringsAsFactors = FALSE)
+colnames(cap_frame) <- cap_words
+cap_frame <- cap_frame[,colSums(cap_frame != 0) > 4]
+
+word_frame <- as.data.frame(as.matrix(DocumentTermMatrix(Corpus(VectorSource(
+  satp$record)))), stringsAsFactors = FALSE)
+word_frame <- word_frame[,colMeans(word_frame != 0) > .01 & 
+    !grepl("[[:upper:][:digit:]]", colnames(word_frame))]
+
+p_imp <- as.character(missForest(
+  cbind("p" = geo_matches$p, cap_frame, word_frame), 
+  verbose = TRUE)$ximp$p)
+d_imp <- as.character(missForest(
+  cbind("d" = geo_matches$d, cap_frame, word_frame), 
+  verbose = TRUE)$ximp$d)
+
