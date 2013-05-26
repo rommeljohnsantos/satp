@@ -41,6 +41,9 @@ geo[] <- lapply(geo, function(x) gsub("^(\\w)", "\\U\\1", x, perl = TRUE))
 geo[] <- lapply(geo, function(x) gsub("\\b([[:lower:]])", "\\U\\1", x, perl = TRUE))
 geo[] <- lapply(geo, function(x) gsub("\\s+\\w?$", "", x))
 geo[] <- lapply(geo, function(x) gsub("\\b(City|Hill|Cantt)\\b", "", x))
+geo[] <- lapply(geo, function(x) gsub("\\b(Agency|District|Tehsil)\\b", "", x))
+geo[] <- lapply(geo, function(x) gsub("\\b(Union|Council|Province)\\b", "", x))
+geo[] <- lapply(geo, function(x) gsub("\\b(Center|Road|Street)\\b", "", x))
 
 geo$p[grepl("Gilgit|Baltistan|Azad|Kashmir|Disputed", geo$p)] <- "Northern Areas"
 geo$p[grepl("Federal|Capital", geo$p)] <- "Punjab"
@@ -236,8 +239,13 @@ geo_matches <- lapply(1:ncol(geo[,setdiff(colnames(geo), "index")]), function(i)
   }
   print(names(geo)[i])
   extr <- pblapply(x[,i], function(y) {
-    agrep(paste0("\\b", y, "\\b"), proper_nouns[,"locs"], fixed = FALSE)
-    })
+    if(grepl("\\b(Dir|Waziristan)\\b", y)) {
+      out <- grep(paste0(y, "\\b"), proper_nouns[,"locs"])
+    } else {
+      out <- agrep(paste0(y, "\\b"), proper_nouns[,"locs"], fixed = FALSE)
+    }
+    out
+  })
   names(extr) <- x$index
   extr <- tapply(extr, x$index, function(x) unique(unlist(x)))
   extr <- lapply(1:i, function(j) {
@@ -297,3 +305,9 @@ geo_matches <- lapply(geo_matches, function(x) {
   out[sapply(out, length) != 1] <- NA
   unlist(out)
 })
+names(geo_matches) <- c("province", "district", "tehsil", "unioncouncil")
+geo_matches <- data.frame(geo_matches, stringsAsFactors = FALSE)
+
+geo_matches$p[is.na(geo_matches$p) & !is.na(geo_matches$d)] <-
+  geo$p[match(geo_matches$d[is.na(geo_matches$p) & !is.na(geo_matches$d)],
+    geo$d)]
