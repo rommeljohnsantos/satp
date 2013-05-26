@@ -9,20 +9,22 @@ library(missForest)
 
 # # Use the following if switching between Windows and Mac
 # Sys.setlocale('LC_ALL', 'C')
-
 #------------------------------------------------------------------------------#
 # Load locations data
 # Located at http://floods2010.pakresponse.info/MapCenter/GISData.aspx
 
 geo1 <- read.csv(text = 
-  getURL("https://raw.github.com/schaunwheeler/satp/master/data/pakistan_pcodes_tehsil_20110304.csv"),
+  getURL(
+    "https://raw.github.com/schaunwheeler/satp/master/data/pakistan_pcodes_tehsil_20110304.csv"),
   as.is = TRUE)
 
 geo2 <- read.csv(text = 
-    getURL("https://raw.github.com/schaunwheeler/satp/master/data/pakistan_pcodes_unioncouncil_20110304.csv"),
+    getURL(
+      "https://raw.github.com/schaunwheeler/satp/master/data/pakistan_pcodes_unioncouncil_20110304.csv"),
   as.is = TRUE)
 
-geo <- merge(geo1, geo2[, c("PROVINCE_C", "DISTRICT_C", "TEHSIL_C", "Union.Council")],
+geo <- merge(geo1, 
+  geo2[, c("PROVINCE_C", "DISTRICT_C", "TEHSIL_C", "Union.Council")],
   by = c("PROVINCE_C", "DISTRICT_C", "TEHSIL_C"),
   all.x = TRUE, all.y = FALSE)
 geo <- geo[,!grepl("_C$", colnames(geo))]
@@ -53,7 +55,6 @@ geo[] <- lapply(geo, function(x) {
 geo[geo == "" | geo == "Unknown" | geo == "Tribal Area"] <- NA
 geo <- unique(geo)
 geo$index <- 1:nrow(geo)
-
 
 #------------------------------------------------------------------------------#
 # Load and parse SATP records
@@ -201,53 +202,52 @@ for(i in 1:nrow(num_table)) {
 #------------------------------------------------------------------------------#
 # Extract location names
 #------------------------------------------------------------------------------#
-satp$record <- gsub('\\.\\s+([[:upper:]])', '. \\L\\1', satp$record, perl = TRUE)
+satp$record <- gsub('\\.\\s+([[:upper:]])', '. \\L\\1', satp$record, 
+  perl = TRUE)
 satp$record <- gsub('^([[:upper:]])', '\\L\\1', satp$record, perl = TRUE)
 
 proper_nouns <- str_extract_all(
   satp$record, 
   '[[:upper:]][[:lower:]]+(\\s+[[:upper:]][[:lower:]]+)*')
+
 proper_nouns[sapply(proper_nouns, length) ==0] <- ""
 
 proper_nouns <- 
   do.call("rbind", lapply(1:length(proper_nouns), function(i) {
-  data.frame("row" = i, "locs" = proper_nouns[[i]],
+  data.frame("record" = i, "phrase" = proper_nouns[[i]],
     stringsAsFactors = FALSE)}))
 
-geo_matches <- lapply(1:ncol(geo[,setdiff(colnames(geo), "index")]), function(i) {
-  ind <- grep("index", colnames(geo))
+geo_matches <- lapply(1:ncol(geo[,c("p", "d", "t", "u")]), function(i) {
   x <- geo[!duplicated(geo[,1:i]) & !is.na(geo[,i]), ]
   if(names(geo)[i] == "p") {
-    x_kp <- x[x$p == "Khyber Pakhtunkhwa",]
-    x_fa <- x[x$p == "Fata",]
+    x_kp <- x[x$p == "Khyber Pakhtunkhwa",]; x_fa <- x[x$p == "Fata",]
     
     add_kp <- do.call("rbind", 
       lapply(c("KP", "NWFP", "North West Frontier Province"), 
-        function(y){
-          out <- x_kp
-          out[,i] <- y
-          out}))
+        function(y){ out <- x_kp; out[,i] <- y; out}))
       
     add_fa <- do.call("rbind", 
       lapply(c("FATA", "Federally Administered Tribal Areas"), 
-        function(y){
-          out <- x_fa
-          out[,i] <- y
-          out}))
+        function(y){out <- x_fa; out[,i] <- y; out}))
     
     x <- rbind(x, add_kp, add_fa)
   }
+  
   print(names(geo)[i])
+  
   extr <- pblapply(x[,i], function(y) {
-    if(grepl("\\b(Dir|Waziristan)\\b", y)) {
-      out <- grep(paste0(y, "\\b"), proper_nouns[,"locs"])
+    if(grepl("\\b(Dir|Waziristan)\\b", y) | names(geo)[i] == "u") {
+      out <- grep(paste0(y, "\\b"), proper_nouns$phrase)
     } else {
-      out <- agrep(paste0(y, "\\b"), proper_nouns[,"locs"], fixed = FALSE)
+      out <- agrep(paste0(y, "\\b"), proper_nouns$phrase, fixed = FALSE)
     }
     out
   })
+  
   names(extr) <- x$index
+  
   extr <- tapply(extr, x$index, function(x) unique(unlist(x)))
+  
   extr <- lapply(1:i, function(j) {
     out <- extr
     names(out) <- geo[as.numeric(names(out)), j]
@@ -262,31 +262,27 @@ geo_matches <- lapply(1:ncol(geo[,setdiff(colnames(geo), "index")]), function(i)
 names(geo_matches) <- c("province", "district", "tehsil", "unioncouncil")
 
 geo_matches <- rapply(geo_matches, unlist)
+geo_matches <- stack(geo_matches)
+geo_matches$ind <- as.character(geo_matches$ind)
 
-geo_matches <- data.frame(
-  "origin" = gsub(
-    "([a-zA-z ]+)\\.([a-zA-z ])\\.([a-zA-z ]+)\\d*", 
-    "\\1", 
-    names(geo_matches), 
-    perl = TRUE),
-  "target" = gsub(
-    "([a-zA-z ]+)\\.([a-zA-z ])\\.([a-zA-z ]+)\\d*", 
-    "\\2", 
-    names(geo_matches), 
-    perl = TRUE),
-  "label" = gsub(
-    "([a-zA-z ]+)\\.([a-zA-z ])\\.([a-zA-z ]+)\\d*", 
-    "\\3", 
-    names(geo_matches), 
-    perl = TRUE),
-  "value" = as.numeric(geo_matches),
+geo_matches <- cbind(
+  proper_nouns[geo_matches$values,], 
+  "ind" = geo_matches$ind,
   stringsAsFactors = FALSE)
+
+geo_matches$origin <- gsub("([a-zA-z ]+)\\.([a-zA-z ])\\.([a-zA-z ]+)\\d*", 
+  "\\1", geo_matches$ind, perl = TRUE)
+geo_matches$target <- gsub("([a-zA-z ]+)\\.([a-zA-z ])\\.([a-zA-z ]+)\\d*", 
+  "\\2", geo_matches$ind, perl = TRUE)
+geo_matches$label <- gsub("([a-zA-z ]+)\\.([a-zA-z ])\\.([a-zA-z ]+)\\d*", 
+  "\\3", geo_matches$ind, perl = TRUE)
 
 geo_matches <- pblapply(c("p", "d", "t", "u"), function(x) {
   cut_df <- geo_matches[geo_matches$target == x,]
-  out <- tapply(cut_df$label, cut_df$value, function(y) {
-    tab <- stack(table(y))
-    tab$ind <- as.character(tab$ind)
+  out <- tapply(cut_df$label, cut_df$record, function(y) {
+    tab <- table(y)
+    tab <- data.frame("values" = as.numeric(tab), "ind" = names(tab),
+      stringsAsFactors = FALSE)
     if(nrow(tab) > 1) {
       if(min(tab$values) < max(tab$values) & 
           sum(tab$values == max(tab$values)) == 1) {
@@ -297,16 +293,19 @@ geo_matches <- pblapply(c("p", "d", "t", "u"), function(x) {
     }
     unique(tab$ind)
   })
-    out[match(1:nrow(proper_nouns), as.numeric(names(out)))]
+  out_names <- names(out)
+  out <- data.frame(
+    "record" = as.numeric(names(out)), 
+      "assign" = as.character(out), 
+      stringsAsFactors = FALSE)
+  out <- out[match(1:nrow(satp), out$record),]
+  colnames(out)[grep("assign", colnames(out))] <- x
+  out$record <- 1:nrow(out)
+  out
 })
 
-geo_matches <- lapply(geo_matches, function(x) {
-  out <- tapply(x, proper_nouns$row, function(y)unique(na.omit(y)))
-  out[sapply(out, length) != 1] <- NA
-  unlist(out)
-})
-names(geo_matches) <- c("province", "district", "tehsil", "unioncouncil")
-geo_matches <- data.frame(geo_matches, stringsAsFactors = FALSE)
+geo_matches <- Reduce(function(...) merge(..., by = c("record"), 
+  all = TRUE), geo_matches)
 
 geo_matches$p[is.na(geo_matches$p) & !is.na(geo_matches$d)] <-
   geo$p[match(geo_matches$d[is.na(geo_matches$p) & !is.na(geo_matches$d)],
