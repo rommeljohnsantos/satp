@@ -202,12 +202,12 @@ for(i in 1:nrow(num_table)) {
 #------------------------------------------------------------------------------#
 # Extract location names
 #------------------------------------------------------------------------------#
-satp$record <- gsub('\\.\\s+([[:upper:]])', '. \\L\\1', satp$record, 
+extract_record <- gsub('\\.\\s+([[:upper:]])', '. \\L\\1', satp$record, 
   perl = TRUE)
-satp$record <- gsub('^([[:upper:]])', '\\L\\1', satp$record, perl = TRUE)
+extract_record <- gsub('^([[:upper:]])', '\\L\\1', extract_record, perl = TRUE)
 
 proper_nouns <- str_extract_all(
-  satp$record, 
+  extract_record, 
   '[[:upper:]][[:lower:]]+(\\s+[[:upper:]][[:lower:]]+)*')
 
 proper_nouns[sapply(proper_nouns, length) ==0] <- ""
@@ -277,6 +277,8 @@ geo_matches$target <- gsub("([a-zA-z ]+)\\.([a-zA-z ])\\.([a-zA-z ]+)\\d*",
 geo_matches$label <- gsub("([a-zA-z ]+)\\.([a-zA-z ])\\.([a-zA-z ]+)\\d*", 
   "\\3", geo_matches$ind, perl = TRUE)
 
+geo_check <- geo_matches
+
 geo_matches <- pblapply(c("p", "d", "t", "u"), function(x) {
   cut_df <- geo_matches[geo_matches$target == x,]
   out <- tapply(cut_df$label, cut_df$record, function(y) {
@@ -318,26 +320,64 @@ for(x in na.omit(unique(geo_matches$p))) {
       !is.na(geo_matches$d)] <- NA
 }
 
-cap_words <- unique(proper_nouns$phrase)
-cap_frame <- data.frame(pblapply(cap_words, function(x) {
-  out <- gregexpr(paste0("\\b", x, "\\b"), satp$record, ignore.case = TRUE)
-  out_na <- sapply(out, "[[", 1) == -1
-  out <- sapply(out, length)
-  out[out_na] <- 0
-  out
-}), stringsAsFactors = FALSE)
-colnames(cap_frame) <- cap_words
-cap_frame <- cap_frame[,colSums(cap_frame != 0) > 4]
+cap_frame <- as.data.frame.matrix(table(proper_nouns))
+cap_frame <- cap_frame[,colSums(cap_frame != 0) > 1]
 
 word_frame <- as.data.frame(as.matrix(DocumentTermMatrix(Corpus(VectorSource(
   satp$record)))), stringsAsFactors = FALSE)
 word_frame <- word_frame[,colMeans(word_frame != 0) > .01 & 
     !grepl("[[:upper:][:digit:]]", colnames(word_frame))]
 
-p_imp <- as.character(missForest(
-  cbind("p" = geo_matches$p, cap_frame, word_frame), 
-  verbose = TRUE)$ximp$p)
-d_imp <- as.character(missForest(
-  cbind("d" = geo_matches$d, cap_frame, word_frame), 
-  verbose = TRUE)$ximp$d)
+p_imp_df <- cbind("p" = geo_matches$p, cap_frame, word_frame)
+set.seed(42)
+p_imp <- as.character(missForest(p_imp_df, verbose = TRUE, 
+  ntree = 100)$ximp$p)
 
+p_imp_false <- !sapply(1:length(p_imp), function(i) {
+  p_imp[i] %in% unique(geo_check$label[
+    geo_check$target == "p" & 
+      geo_check$record == i]
+  )
+})
+p_imp_for_d <- p_imp
+p_imp_for_d[p_imp_false] <- "Unknown"
+
+d_imp_df <- cbind("d" = geo_matches$d, cap_frame, word_frame)
+
+d_imps <- lapply(unique(p_imp_for_d), function(x) {
+  df <- subset(d_imp_df, p_imp_for_d == x)
+  if(x != "Unknown" & sum(is.na(df$d)) > 0) {
+    df <- droplevels(df)
+    set.seed(42)
+    d_imp <- as.character(missForest(df, verbose = TRUE)$ximp$d)
+    } else {
+      d_imp <- df$d
+    }
+  data.frame(
+    "d_imp" = d_imp,
+    ind = row.names(df),
+    stringsAsFactors = FALSE)  
+})
+d_imp <- do.call("rbind", d_imps)
+d_imp <- d_imp[order(as.numeric(d_imp$ind)),"d_imp"] 
+
+d_imp_df2 <- cbind("p" = p_imp_for_d, "d" = d_imp, cap_frame, word_frame)
+set.seed(42)
+d_imp2 <- as.character(missForest(d_imp_df2, verbose = TRUE)$ximp$d)
+
+d_imp_false <- !sapply(1:length(d_imp), function(i) {
+  d_imp2[i] %in% unique(geo_check$label[
+    geo_check$target == "d" & 
+      geo_check$record == i]
+  )
+})
+
+satp_check <- data.frame(
+  "p" = geo_matches$p, 
+  "p_rf" = p_imp,
+  "p_rf_miss" = p_imp_false,
+  "d" = geo_matches$d, 
+  "d_rf" = d_imp2,
+  "d_rf_miss" = d_imp_false,
+  "record" = satp$record,
+  stringsAsFactors = FALSE)
