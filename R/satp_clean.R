@@ -46,6 +46,7 @@ geo[] <- lapply(geo, function(x) gsub("\\b(City|Hill|Cantt)\\b", "", x))
 geo[] <- lapply(geo, function(x) gsub("\\b(Agency|District|Tehsil)\\b", "", x))
 geo[] <- lapply(geo, function(x) gsub("\\b(Union|Council|Province)\\b", "", x))
 geo[] <- lapply(geo, function(x) gsub("\\b(Center|Road|Street)\\b", "", x))
+geo[] <- lapply(geo, function(x) gsub("\\b(West|Central|East)\\b", "", x))
 
 geo$p[grepl("Gilgit|Baltistan|Azad|Kashmir|Disputed", geo$p)] <- "Northern Areas"
 geo$p[grepl("Federal|Capital", geo$p)] <- "Punjab"
@@ -235,12 +236,17 @@ geo_matches <- lapply(1:ncol(geo[,c("p", "d", "t", "u")]), function(i) {
   
   print(names(geo)[i])
   
+  x[,i] <- gsub("[aeiouy]+", "[a-z]?[aeiou]*[a-z]?", x[,i])
+  x[,i] <- gsub("sh?", "sh?", x[,i], ignore.case = TRUE)
+  x[,i] <- gsub("\\s+", "\\s*", x[,i])
+  
   extr <- pblapply(x[,i], function(y) {
-    if(grepl("\\b(Dir|Waziristan)\\b", y) | names(geo)[i] == "u") {
-      out <- grep(paste0(y, "\\b"), proper_nouns$phrase)
-    } else {
-      out <- agrep(paste0(y, "\\b"), proper_nouns$phrase, fixed = FALSE)
-    }
+    
+#     if(grepl("\\b(Dir|Waziristan)\\b", y) | names(geo)[i] == "u") {
+      out <- grep(paste0("\\b", y, "\\b"), proper_nouns$phrase)
+#     } else {
+#       out <- agrep(paste0(y, "\\b"), proper_nouns$phrase, fixed = FALSE)
+#     }
     out
   })
   
@@ -320,6 +326,39 @@ for(x in na.omit(unique(geo_matches$p))) {
       !is.na(geo_matches$d)] <- NA
 }
 
+De Excluded Area Rajanpur 
+
+geo_d_replace <- geo_matches[!is.na(geo_matches$p) & is.na(geo_matches$d),]
+
+geo_d_replace <- sapply(1:nrow(geo_d_replace), function(i) {
+  poss <- na.omit(unique(geo$d[geo$p == geo_d_replace$p[i]]))
+  actual <- na.omit(geo_check$label[
+    geo_check$target == "d" &
+      geo_check$record == geo_d_replace$record[i]])
+  candid <- actual[actual %in% poss]
+  tab <- table(candid)
+  tab <- data.frame("values" = as.numeric(tab), "ind" = names(tab),
+    stringsAsFactors = FALSE)
+  if(nrow(tab) > 1) {
+    if(min(tab$values) < max(tab$values) & 
+        sum(tab$values == max(tab$values)) == 1) {
+      tab <- tab[tab$values == max(tab$values),]
+    } else {
+      tab$ind <- NA
+    }
+  }
+  out <- unique(tab$ind)
+  if(length(out) == 0) {
+    out <- NA
+  }
+  out
+})
+
+geo_matches$d[!is.na(geo_matches$p) & is.na(geo_matches$d)] <- geo_d_replace
+
+
+
+
 cap_frame <- as.data.frame.matrix(table(proper_nouns))
 cap_frame <- cap_frame[,colSums(cap_frame != 0) > 1]
 
@@ -381,3 +420,13 @@ satp_check <- data.frame(
   "d_rf_miss" = d_imp_false,
   "record" = satp$record,
   stringsAsFactors = FALSE)
+
+
+# re-run filling in province based on district and district based on province
+# for cases where imp worked for one but not for other
+
+
+tst <- unique(subset(geo_check, phrase != label & tolower(substr(origin, 1,1)) == target, 
+  select = c("phrase", "label")))
+tst[sapply(1:nrow(tst), function(i) {
+  !grepl(tst$label[i],tst$phrase[i], ignore.case = TRUE)}),]
