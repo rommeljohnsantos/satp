@@ -34,7 +34,7 @@ geo[] <- lapply(geo, function(x) gsub("\\s+No\\.?\\s*(\\d|i).*$", "", x))
 geo[] <- lapply(geo, function(x) gsub("(\\s+|_)?\\d.*$", "", x)) 
 geo[] <- lapply(geo, function(x) gsub("(-i|\\().*$", "", x)) 
 geo[] <- lapply(geo, function(x) gsub("-(uc)?$", "", x)) 
-geo[] <- lapply(geo, function(x) gsub("De.(e|E)xcluded Area (D.g )?", "", x)) 
+geo[] <- lapply(geo, function(x) gsub("De.+?(e|E)xcluded Area (D.g )?", "", x)) 
 geo[] <- lapply(geo, function(x) gsub(" (P\\.a\\.|Tc|Uc)$", "", x)) 
 geo[] <- lapply(geo, function(x) gsub("\\w\\.\\s*", "", x)) 
 geo[] <- lapply(geo, function(x) gsub("\\s*/\\s*", "|", x)) 
@@ -46,7 +46,7 @@ geo[] <- lapply(geo, function(x) gsub("\\b(City|Hill|Cantt)\\b", "", x))
 geo[] <- lapply(geo, function(x) gsub("\\b(Agency|District|Tehsil)\\b", "", x))
 geo[] <- lapply(geo, function(x) gsub("\\b(Union|Council|Province)\\b", "", x))
 geo[] <- lapply(geo, function(x) gsub("\\b(Center|Road|Street)\\b", "", x))
-geo[] <- lapply(geo, function(x) gsub("\\b(West|Central|East)\\b", "", x))
+geo[] <- lapply(geo, function(x) gsub("\\b(West|Central|East|Urban)\\b", "", x))
 
 geo$p[grepl("Gilgit|Baltistan|Azad|Kashmir|Disputed", geo$p)] <- "Northern Areas"
 geo$p[grepl("Federal|Capital", geo$p)] <- "Punjab"
@@ -54,6 +54,11 @@ geo[] <- lapply(geo, function(x) {
   gsub('^\\s+|\\s+$|(?<=\\s)\\s+', '', x, perl = TRUE)
 })
 geo[geo == "" | geo == "Unknown" | geo == "Tribal Area"] <- NA
+
+uc_remove <- intersect(na.omit(geo$u), na.omit(c(geo$p,geo$d)))
+geo <- geo[!(geo$u %in% uc_remove),]
+geo$t[geo$d == geo$t & !is.na(geo$d) & is.na(geo$u)] <- NA
+
 geo <- unique(geo)
 geo$index <- 1:nrow(geo)
 
@@ -236,18 +241,14 @@ geo_matches <- lapply(1:ncol(geo[,c("p", "d", "t", "u")]), function(i) {
   
   print(names(geo)[i])
   
-  x[,i] <- gsub("[aeiouy]+", "[a-z]?[aeiou]*[a-z]?", x[,i])
-  x[,i] <- gsub("sh?", "sh?", x[,i], ignore.case = TRUE)
-  x[,i] <- gsub("\\s+", "\\s*", x[,i])
+  x_change <- nchar(x[,i]) > 4
+  
+  x[x_change, i] <- gsub("[aeiouy]", "[aeiouy]", x[x_change, i])
+  x[x_change, i] <- gsub("(s|S)h?", "\\1h?", x[x_change, i], perl = TRUE)
+  x[x_change, i] <- gsub("\\s+", "\\\\s*", x[x_change, i])
   
   extr <- pblapply(x[,i], function(y) {
-    
-#     if(grepl("\\b(Dir|Waziristan)\\b", y) | names(geo)[i] == "u") {
-      out <- grep(paste0("\\b", y, "\\b"), proper_nouns$phrase)
-#     } else {
-#       out <- agrep(paste0(y, "\\b"), proper_nouns$phrase, fixed = FALSE)
-#     }
-    out
+    grep(paste0("\\b", y, "\\b"), proper_nouns$phrase)
   })
   
   names(extr) <- x$index
@@ -315,6 +316,8 @@ geo_matches <- pblapply(c("p", "d", "t", "u"), function(x) {
 geo_matches <- Reduce(function(...) merge(..., by = c("record"), 
   all = TRUE), geo_matches)
 
+check_list <- list(stack(table(!is.na(geo_matches$p), !is.na(geo_matches$d))))
+
 geo_matches$p[is.na(geo_matches$p) & !is.na(geo_matches$d)] <-
   geo$p[match(geo_matches$d[is.na(geo_matches$p) & !is.na(geo_matches$d)],
     geo$d)]
@@ -326,10 +329,9 @@ for(x in na.omit(unique(geo_matches$p))) {
       !is.na(geo_matches$d)] <- NA
 }
 
-De Excluded Area Rajanpur 
+check_list <- c(check_list, stack(table(!is.na(geo_matches$p), !is.na(geo_matches$d))))
 
 geo_d_replace <- geo_matches[!is.na(geo_matches$p) & is.na(geo_matches$d),]
-
 geo_d_replace <- sapply(1:nrow(geo_d_replace), function(i) {
   poss <- na.omit(unique(geo$d[geo$p == geo_d_replace$p[i]]))
   actual <- na.omit(geo_check$label[
@@ -353,11 +355,9 @@ geo_d_replace <- sapply(1:nrow(geo_d_replace), function(i) {
   }
   out
 })
-
 geo_matches$d[!is.na(geo_matches$p) & is.na(geo_matches$d)] <- geo_d_replace
 
-
-
+check_list <- c(check_list, stack(table(!is.na(geo_matches$p), !is.na(geo_matches$d))))
 
 cap_frame <- as.data.frame.matrix(table(proper_nouns))
 cap_frame <- cap_frame[,colSums(cap_frame != 0) > 1]
