@@ -54,6 +54,7 @@ geo[] <- lapply(geo, function(x) {
   gsub('^\\s+|\\s+$|(?<=\\s)\\s+', '', x, perl = TRUE)
 })
 geo[geo == "" | geo == "Unknown" | geo == "Tribal Area"] <- NA
+geo[!is.na(geo) & (geo=="Khan" | geo == "Dera" | geo == "Shin")] <- NA
 
 uc_remove <- intersect(na.omit(geo$u), na.omit(c(geo$p,geo$d)))
 geo <- geo[!(geo$u %in% uc_remove),]
@@ -223,6 +224,8 @@ proper_nouns <-
   data.frame("record" = i, "phrase" = proper_nouns[[i]],
     stringsAsFactors = FALSE)}))
 
+proper_nouns <- proper_nouns[!grepl("Shia|Sunni|Hazara", proper_nouns$phrase),]
+
 geo_matches <- lapply(1:ncol(geo[,c("p", "d", "t", "u")]), function(i) {
   x <- geo[!duplicated(geo[,1:i]) & !is.na(geo[,i]), ]
   if(names(geo)[i] == "p") {
@@ -243,13 +246,21 @@ geo_matches <- lapply(1:ncol(geo[,c("p", "d", "t", "u")]), function(i) {
   
   x_change <- nchar(x[,i]) > 4
   
-  x[x_change, i] <- gsub("[aeiouy]", "[aeiouy]", x[x_change, i])
+  if(i != 4) { # only applies to non union council data
+  x[x_change, i] <- gsub("[aeiou]", "[aeiou]", x[x_change, i])
   x[x_change, i] <- gsub("(s|S)h?", "\\1h?", x[x_change, i], perl = TRUE)
   x[x_change, i] <- gsub("\\s+", "\\\\s*", x[x_change, i])
+  }
   
-  extr <- pblapply(x[,i], function(y) {
-    grep(paste0("\\b", y, "\\b"), proper_nouns$phrase)
-  })
+  if(i == 4) { # only applies to union council data
+    extr <- pblapply(x[,i], function(y) {
+      grep(paste0("^", y, "$"), proper_nouns$phrase)
+    })
+  } else {
+    extr <- pblapply(x[,i], function(y) {
+      grep(paste0("\\b", y, "\\b"), proper_nouns$phrase)
+    })
+  }
   
   names(extr) <- x$index
   
@@ -285,6 +296,23 @@ geo_matches$label <- gsub("([a-zA-z ]+)\\.([a-zA-z ])\\.([a-zA-z ]+)\\d*",
   "\\3", geo_matches$ind, perl = TRUE)
 
 geo_check <- geo_matches
+geo_check <- geo_check[order(geo_check$record),]
+
+geo_matches <- geo_matches[
+  !(geo_matches$phrase != "Rawalpindi" & 
+      geo_matches$record %in% 
+      unique(geo_matches$record[geo_matches$phrase == "Rawalpindi"])),]
+
+geo_matches <- geo_matches[
+  !(geo_matches$phrase != "North Waziristan" & 
+      geo_matches$record %in% 
+      unique(geo_matches$record[geo_matches$phrase == "North Waziristan"])),]
+
+geo_matches <- geo_matches[
+  !(geo_matches$phrase != "South Waziristan" & 
+      geo_matches$record %in% 
+      unique(geo_matches$record[geo_matches$phrase == "South Waziristan"])),]
+
 
 geo_matches <- pblapply(c("p", "d", "t", "u"), function(x) {
   cut_df <- geo_matches[geo_matches$target == x,]
@@ -316,7 +344,8 @@ geo_matches <- pblapply(c("p", "d", "t", "u"), function(x) {
 geo_matches <- Reduce(function(...) merge(..., by = c("record"), 
   all = TRUE), geo_matches)
 
-check_list <- list(stack(table(!is.na(geo_matches$p), !is.na(geo_matches$d))))
+check_list <- list(
+  data.frame(table("p" = !is.na(geo_matches$p), "d" = !is.na(geo_matches$d))))
 
 geo_matches$p[is.na(geo_matches$p) & !is.na(geo_matches$d)] <-
   geo$p[match(geo_matches$d[is.na(geo_matches$p) & !is.na(geo_matches$d)],
@@ -329,7 +358,10 @@ for(x in na.omit(unique(geo_matches$p))) {
       !is.na(geo_matches$d)] <- NA
 }
 
-check_list <- c(check_list, stack(table(!is.na(geo_matches$p), !is.na(geo_matches$d))))
+check_list <- c(check_list, 
+  list(
+    data.frame(
+      table("p" = !is.na(geo_matches$p), "d" = !is.na(geo_matches$d)))))
 
 geo_d_replace <- geo_matches[!is.na(geo_matches$p) & is.na(geo_matches$d),]
 geo_d_replace <- sapply(1:nrow(geo_d_replace), function(i) {
@@ -357,8 +389,18 @@ geo_d_replace <- sapply(1:nrow(geo_d_replace), function(i) {
 })
 geo_matches$d[!is.na(geo_matches$p) & is.na(geo_matches$d)] <- geo_d_replace
 
-check_list <- c(check_list, stack(table(!is.na(geo_matches$p), !is.na(geo_matches$d))))
+check_list <- c(check_list, 
+  list(
+    data.frame(
+      table("p" = !is.na(geo_matches$p), "d" = !is.na(geo_matches$d)))))
 
+satp$index <- 1:nrow(satp)
+geo_check[geo_check$record %in% satp$index[is.na(geo_matches$p) & is.na(geo_matches$d)],]
+#484 rows
+# Remove 
+
+
+# Use text mining to fill in missing provinces and district values
 cap_frame <- as.data.frame.matrix(table(proper_nouns))
 cap_frame <- cap_frame[,colSums(cap_frame != 0) > 1]
 
